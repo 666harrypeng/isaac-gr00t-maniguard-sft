@@ -19,14 +19,14 @@
 # Usage:
 #   bash tools/gr00t_sft/run_sft.sh --dataset <lerobot_dir> --output <ckpt_dir> \
 #        [--steps 3000] [--batch 32] [--save-steps 1000] [--save-limit 3] \
-#        [--workers 8] [--exp-name stack] [-- <extra launch_finetune.py args>...]
+#        [--workers 6] [--exp-name stack] [-- <extra launch_finetune.py args>...]
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GR00T_HOME="${GR00T_HOME:-$REPO_ROOT}"          # self-contained: the fork IS the GR00T repo
 MODALITY_CONFIG="$REPO_ROOT/maniguard/gr00t_sft/maniguard_embodiment.py"
 BASE_MODEL="${BASE_MODEL:-nvidia/GR00T-N1.6-3B}"
-WANDB_PROJECT="${WANDB_PROJECT:-gr00t-n16-datagen-v1-joint-2cam}"
+WANDB_PROJECT="${WANDB_PROJECT:-maniguard-gr00tN1d6}"
 
 DATASET=""
 OUTPUT=""
@@ -36,7 +36,7 @@ GPUS=8
 LR=2e-4            # peak LR (cosine); sqrt-scaled from 1e-4@batch64 for global batch 256
 SAVE_STEPS=1000
 SAVE_LIMIT=4
-WORKERS=48
+WORKERS=6          # PER-GPU dataloader workers (torchrun: total = WORKERS*GPUS)
 EXP_NAME=""
 EXTRA=()
 

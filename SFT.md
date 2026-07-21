@@ -29,15 +29,22 @@ docker run --gpus all --ipc=host -e HF_TOKEN -e WANDB_API_KEY \
 
 **Interactive (uv):**
 ```bash
-uv sync && uv pip install -e .          # x86_64: flash-attn/torchcodec/deepspeed as wheels
+uv sync --frozen --python 3.10          # x86_64: flash-attn/torchcodec/deepspeed as wheels
 # (aarch64: run scripts/deployment/dgpu/install_deps.sh instead — builds torchcodec)
 source .venv/bin/activate
-export HF_TOKEN=...  WANDB_API_KEY=...
-bash tools/gr00t_sft/run_all.sh --family jar     # or --all
+
+# TRAIN (needs WANDB_API_KEY only); --data-root points at the shared LeRobot datasets
+export WANDB_API_KEY=...
+bash tools/gr00t_sft/run_all.sh --data-root /path/to/lerobot --family jar    # or --all
+
+# PUSH later, separately (needs HF_TOKEN)
+export HF_TOKEN=...
+bash tools/gr00t_sft/run_all.sh --push --family jar                          # or --push --all
 ```
 
-`run_all.sh` per family: pull the dataset (once, shared) → prepare a GR00T VIEW (symlinks
-+ `modality.json` + baked stats) → train → push the checkpoint + card to HF.
+Per family, TRAIN = ensure the dataset is present (shared, read-only) → prepare a GR00T VIEW
+(symlink videos/parquet + `modality.json` + baked stats) → train ~2 epochs. PUSH (`--push`)
+uploads the latest checkpoint + card to HF. The shared dataset is never modified.
 
 ## Recipe (8-card config)
 
@@ -54,19 +61,21 @@ bash tools/gr00t_sft/run_all.sh --family jar     # or --all
 | stack | 2,652,083 | 20,750 |
 | cabinet | 4,172,962 | 32,650 |
 
-Tune per node without editing configs:
+Tune per node without editing configs (`WORKERS` = **per-GPU** dataloader workers → ×GPUS total):
 ```bash
-BATCH=256 GPUS=8 WORKERS=48 LR=2e-4 bash tools/gr00t_sft/run_all.sh --family jar
+BATCH=256 GPUS=8 WORKERS=6 LR=2e-4 TAG=-run2 \
+  bash tools/gr00t_sft/run_all.sh --data-root /path/to/lerobot --family jar
 # or the per-run wrapper:
-bash tools/gr00t_sft/run_sft.sh --dataset <prepped> --output <dir> --steps N --batch 256 --gpus 8 --lr 2e-4
+bash tools/gr00t_sft/run_sft.sh --dataset <prepped> --output <dir> --steps N --batch 256 --gpus 8 --lr 2e-4 --workers 6
 ```
 
 ## Outputs
 
-Each family pushes inference files + a model card to
-`IDEAS-Lab-Northwestern/gr00t-n16-datagen-v1-<fam>-joint-2cam`. To distinguish parallel
-runs, append a tag: `TAG=-run2 bash tools/gr00t_sft/run_all.sh --family jar` →
-`...-joint-2cam-run2`.
+`--push` uploads inference files + a model card to
+`IDEAS-Lab-Northwestern/gr00t-n16-datagen-v1-<fam>-joint-2cam`. **wandb**: project
+`maniguard-gr00tN1d6`, run `datagen_v1_<fam>_joint_2cam`. `TAG` appends to BOTH the HF repo
+and the wandb project — e.g. `TAG=-run2` → HF `...-joint-2cam-run2`, wandb project
+`maniguard-gr00tN1d6-run2` (run name unchanged, so families stay comparable within a project).
 
 ## Baking stats (maintainer)
 
