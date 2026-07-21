@@ -1,3 +1,10 @@
+> **This is a ManiGuard fork.** It fine-tunes GR00T N1.6 on the 6 ManiGuard base-task
+> families (GR00T vs pi0.5, identical data/cameras/controller). **See [`SFT.md`](SFT.md)
+> to run the SFT** (and [`CLAUDE.md`](CLAUDE.md) for the compute-node agent guide).
+> Everything below is NVIDIA's upstream Isaac-GR00T README.
+
+---
+
 <div align="center">
 
   <img src="media/header_compress.png" width="800" alt="NVIDIA Isaac GR00T N1.6 Header">
