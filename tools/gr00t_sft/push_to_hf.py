@@ -2,9 +2,12 @@
 """Push a GR00T-N1.6 SFT checkpoint + a generated model card to a public HF repo.
 
 Points at the run dir whose ROOT holds the FINAL saved model; uploads only the
-inference bundle (model safetensors + config.json + experiment_cfg/ + processor/)
-and skips the intermediate checkpoint-*/ dirs, DeepSpeed ZeRO state (global_step*/,
-*_states.pt), and optimizer / scheduler / rng / trainer-state files.
+inference bundle (model safetensors + config.json + processor/) and skips the
+intermediate checkpoint-*/ dirs, the training-only experiment_cfg/ (its conf.yaml/
+config.yaml leak absolute server paths and are never read at inference), DeepSpeed
+ZeRO state (global_step*/, *_states.pt), and optimizer/scheduler/rng/trainer-state.
+Inference (Gr00tPolicy) loads config.json + safetensors via AutoModel and the
+normalization stats + modality config from processor/ via AutoProcessor.
 Generates a concise model card from the per-family metadata.
 
 Run inside the Isaac-GR00T venv (needs HF_TOKEN). Usage:
@@ -26,6 +29,9 @@ from huggingface_hub import HfApi
 # strip those if --ckpt points straight at a single checkpoint-<step>/ dir.
 _IGNORE = [
     "checkpoint-*",       # intermediate HF-Trainer step checkpoints (keep only the final root model)
+    "experiment_cfg/*",   # training-only config dump — conf.yaml/config.yaml leak absolute server
+    #                       paths (dataset_paths, output_dir); NOT read at inference (Gr00tPolicy
+    #                       loads stats + modality from processor/, not here)
     "global_step*",       # DeepSpeed consolidated state dirs
     "*optim_states.pt",   # DeepSpeed ZeRO optimizer shards
     "*model_states.pt",   # DeepSpeed model-state shards
@@ -64,7 +70,7 @@ families with identical data, cameras, and controller.
 - Data: [{data_repo}](https://huggingface.co/datasets/{data_repo}); videos decoded as H.264 for GR00T's torchcodec loader
 
 ## Usage
-Load with `Gr00tPolicy` from [Isaac-GR00T (n1d6)](https://github.com/NVIDIA/Isaac-GR00T/tree/n1d6), `--embodiment-tag NEW_EMBODIMENT`. The included `experiment_cfg/` carries the modality config + normalization stats.
+Load with `Gr00tPolicy` from [Isaac-GR00T (n1d6)](https://github.com/NVIDIA/Isaac-GR00T/tree/n1d6), `--embodiment-tag NEW_EMBODIMENT`. The included `processor/` carries the normalization stats + modality config.
 
 > WARNING - Convention (must match at eval): joint-space JointController (absolute joint targets, NON_EEF) + 2 cameras (image_left overview + wrist). A mismatched controller or camera set silently feeds an out-of-distribution input.
 """
