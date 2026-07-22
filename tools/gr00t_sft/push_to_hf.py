@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 """Push a GR00T-N1.6 SFT checkpoint + a generated model card to a public HF repo.
 
-Uploads only the inference-relevant files (model safetensors + experiment_cfg +
-processor + config); skips the optimizer / scheduler / rng / trainer-state files.
+Points at the run dir whose ROOT holds the FINAL saved model; uploads only the
+inference bundle (model safetensors + config.json + experiment_cfg/ + processor/)
+and skips the intermediate checkpoint-*/ dirs, DeepSpeed ZeRO state (global_step*/,
+*_states.pt), and optimizer / scheduler / rng / trainer-state files.
 Generates a concise model card from the per-family metadata.
 
 Run inside the Isaac-GR00T venv (needs HF_TOKEN). Usage:
@@ -18,10 +20,19 @@ import argparse
 
 from huggingface_hub import HfApi
 
-# Training-only artifacts — not needed for inference, skip to keep the repo lean.
+# Training-only artifacts — not needed for inference; skip to keep the repo lean. When --ckpt
+# is a run dir, "checkpoint-*" drops every intermediate step checkpoint (each re-saves the full
+# weights + a ~30GB DeepSpeed global_step*/); the DeepSpeed + resume-state patterns below also
+# strip those if --ckpt points straight at a single checkpoint-<step>/ dir.
 _IGNORE = [
+    "checkpoint-*",       # intermediate HF-Trainer step checkpoints (keep only the final root model)
+    "global_step*",       # DeepSpeed consolidated state dirs
+    "*optim_states.pt",   # DeepSpeed ZeRO optimizer shards
+    "*model_states.pt",   # DeepSpeed model-state shards
+    "zero_to_fp32.py",
+    "latest",
     "optimizer.pt",
-    "rng_state.pth",
+    "rng_state*.pth",
     "scheduler.pt",
     "trainer_state.json",
     "training_args.bin",

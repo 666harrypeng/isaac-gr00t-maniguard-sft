@@ -71,8 +71,10 @@ bash tools/gr00t_sft/run_sft.sh --dataset <prepped> --output <dir> --steps N --b
 
 ## Outputs
 
-`--push` uploads inference files + a model card to
-`IDEAS-Lab-Northwestern/gr00t-n16-datagen-v1-<fam>-joint-2cam`. **wandb**: project
+`--push` uploads **only the final model's inference bundle** (model safetensors + `config.json`
++ `experiment_cfg/` + `processor/`) + a model card to
+`IDEAS-Lab-Northwestern/gr00t-n16-datagen-v1-<fam>-joint-2cam` — the intermediate `checkpoint-*/`
+dirs and DeepSpeed ZeRO state are excluded (~6.6 GB, not the ~150 GB full run dir). **wandb**: project
 `maniguard-gr00tN1d6`, run `datagen_v1_<fam>_joint_2cam`. `TAG` appends to BOTH the HF repo
 and the wandb project — e.g. `TAG=-run2` → HF `...-joint-2cam-run2`, wandb project
 `maniguard-gr00tN1d6-run2` (run name unchanged, so families stay comparable within a project).

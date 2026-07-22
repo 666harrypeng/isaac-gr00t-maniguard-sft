@@ -103,17 +103,17 @@ push_family() {
   [[ -n "$frames" ]] || { echo "ERROR: unknown family '$fam' (want: ${ORDER[*]})." >&2; exit 1; }
   local data_repo="$ORG/datagen-$fam-v1-joint-5cam"
   local model_repo="$ORG/gr00t-n16-datagen-v1-$fam-joint-2cam$TAG"   # no -base; optional TAG suffix
-  local out="$RUN_ROOT/runs/$fam"
+  local exp="datagen_v1_${fam}_joint_2cam"          # launch_finetune nests the output under this name
+  local run_dir="$RUN_ROOT/runs/$fam/$exp"          # its ROOT = the FINAL saved model + experiment_cfg/ + processor/
   local steps=$(( (frames * EPOCHS + BATCH - 1) / BATCH ))
-  # latest checkpoint the run wrote (HF-Trainer layout: <out>/checkpoint-<step>); fall back to <out>.
-  local ckpt
-  ckpt="$(ls -dt "$out"/checkpoint-* 2>/dev/null | head -1 || true)"
-  [[ -n "$ckpt" ]] || ckpt="$out"
+  # Push the run dir's ROOT only. push_to_hf.py ignores checkpoint-*/ + DeepSpeed state, so just
+  # the final model's ~6.6GB inference bundle uploads (no intermediate ckpts, no optimizer/resume state).
+  [[ -f "$run_dir/config.json" ]] || { echo "ERROR: no final model at $run_dir — did $fam finish training?" >&2; exit 1; }
 
   echo "==================== PUSH $fam ===================="
-  echo "[run_all] $fam ckpt=$ckpt -> $model_repo"
+  echo "[run_all] $fam final-model=$run_dir -> $model_repo"
   python tools/gr00t_sft/push_to_hf.py \
-    --ckpt "$ckpt" --repo "$model_repo" --title "${fam^}" --task "$fam" \
+    --ckpt "$run_dir" --repo "$model_repo" --title "${fam^}" --task "$fam" \
     --data-repo "$data_repo" --frames "$frames" --epochs "$EPOCHS" \
     --steps "$steps" --batch "$BATCH"
   echo "[run_all] $fam PUSH DONE -> $model_repo"
