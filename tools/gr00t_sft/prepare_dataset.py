@@ -20,13 +20,16 @@ from pathlib import Path
 # tools/gr00t_sft/prepare_dataset.py -> repo root -> the embodiment config file.
 _REPO = Path(__file__).resolve().parents[2]
 _CFG = _REPO / "maniguard" / "gr00t_sft" / "maniguard_embodiment.py"
+# Real-robot (DROID-schema) datasets need the real config instead -- different state/video
+# columns AND an absolute (velocity) arm action. Select it with --embodiment-config.
+_CFG_REAL = _REPO / "maniguard" / "gr00t_sft" / "maniguard_embodiment_real.py"
 
 
-def _load_embodiment():
+def _load_embodiment(cfg: Path = _CFG):
     """Exec the self-contained config file: registers NEW_EMBODIMENT, returns module."""
-    spec = importlib.util.spec_from_file_location("maniguard_embodiment", _CFG)
+    spec = importlib.util.spec_from_file_location(cfg.stem, cfg)
     if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load embodiment config from {_CFG}")
+        raise ImportError(f"cannot load embodiment config from {cfg}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -78,9 +81,17 @@ def main() -> None:
     ap.add_argument("--src", required=True, help="source LeRobot dataset dir (untouched)")
     ap.add_argument("--out", required=True, help="output GR00T-ready view dir (symlinks + real meta)")
     ap.add_argument("--stats-dir", default=None, help="fork gr00t_stats/<fam> with baked stats")
+    ap.add_argument("--embodiment-config", choices=("sim", "real"), default="sim",
+                    help="which modality config to bake into meta/modality.json: 'sim' "
+                         "(datagen, absolute joint targets) or 'real' (DROID schema, joint "
+                         "VELOCITY). Must match the --modality-config passed to run_sft.sh.")
     args = ap.parse_args()
 
-    mod = _load_embodiment()  # register NEW_EMBODIMENT once
+    cfg = _CFG if args.embodiment_config == "sim" else _CFG_REAL
+    if not cfg.is_file():
+        raise FileNotFoundError(f"embodiment config not found: {cfg}")
+    print(f"[prepare] embodiment={args.embodiment_config} ({cfg.name})")
+    mod = _load_embodiment(cfg)  # register NEW_EMBODIMENT once
     prepare(Path(args.src), Path(args.out), Path(args.stats_dir) if args.stats_dir else None, mod)
 
 

@@ -19,12 +19,18 @@
 # Usage:
 #   bash tools/gr00t_sft/run_sft.sh --dataset <lerobot_dir> --output <ckpt_dir> \
 #        [--steps 3000] [--batch 32] [--save-steps 1000] [--save-limit 3] \
-#        [--workers 6] [--exp-name stack] [-- <extra launch_finetune.py args>...]
+#        [--workers 6] [--exp-name stack] [--modality-config sim|real|<path>] \
+#        [-- <extra launch_finetune.py args>...]
+#
+#   --modality-config: 'sim' (default, datagen datasets -- absolute joint targets) or
+#   'real' (DROID-schema teleop -- joint VELOCITY). It MUST match the --embodiment-config
+#   used by prepare_dataset.py; the mismatch check below refuses to start otherwise.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GR00T_HOME="${GR00T_HOME:-$REPO_ROOT}"          # self-contained: the fork IS the GR00T repo
 MODALITY_CONFIG="$REPO_ROOT/maniguard/gr00t_sft/maniguard_embodiment.py"
+MODALITY_CONFIG_REAL="$REPO_ROOT/maniguard/gr00t_sft/maniguard_embodiment_real.py"
 BASE_MODEL="${BASE_MODEL:-nvidia/GR00T-N1.6-3B}"
 WANDB_PROJECT="${WANDB_PROJECT:-maniguard-gr00tN1d6}"
 
@@ -52,8 +58,15 @@ while [ "$#" -gt 0 ]; do
         --save-limit) SAVE_LIMIT="$2"; shift 2 ;;
         --workers)    WORKERS="$2"; shift 2 ;;
         --exp-name)   EXP_NAME="$2"; shift 2 ;;
+        --modality-config)
+            case "$2" in
+                sim)  MODALITY_CONFIG="$REPO_ROOT/maniguard/gr00t_sft/maniguard_embodiment.py" ;;
+                real) MODALITY_CONFIG="$MODALITY_CONFIG_REAL" ;;
+                *)    MODALITY_CONFIG="$2" ;;   # explicit path
+            esac
+            shift 2 ;;
         --)           shift; EXTRA=("$@"); break ;;
-        -h|--help)    sed -n '1,28p' "$0"; exit 0 ;;
+        -h|--help)    sed -n '1,27p' "$0"; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; exit 1 ;;
     esac
 done
@@ -68,6 +81,18 @@ OUTPUT="$(realpath -m "$OUTPUT")"
     exit 1
 }
 [ -f "$MODALITY_CONFIG" ] || { echo "ERROR: modality config not found: $MODALITY_CONFIG" >&2; exit 1; }
+
+# The dataset's baked meta/modality.json and the modality config passed here MUST describe
+# the same schema. A mismatch does not crash -- it silently trains on the wrong columns, or
+# on `velocity - joint_position` for the arm. Detect it from a key only the real schema has.
+ds_is_real=$(grep -q 'exterior_image_1_left' "$DATASET/meta/modality.json" && echo 1 || echo 0)
+cfg_is_real=$(case "$MODALITY_CONFIG" in *_real.py) echo 1 ;; *) echo 0 ;; esac)
+[ "$ds_is_real" = "$cfg_is_real" ] || {
+    echo "ERROR: schema mismatch — dataset modality.json is $([ "$ds_is_real" = 1 ] && echo REAL || echo SIM)," >&2
+    echo "       but --modality-config resolved to $([ "$cfg_is_real" = 1 ] && echo REAL || echo SIM): $MODALITY_CONFIG" >&2
+    echo "       Re-run prepare_dataset.py with the matching --embodiment-config." >&2
+    exit 1
+}
 EXP_NAME="${EXP_NAME:-$(basename "$OUTPUT")}"
 [ $(( BATCH % GPUS )) -eq 0 ] || { echo "ERROR: BATCH ($BATCH) must be divisible by GPUS ($GPUS)." >&2; exit 1; }
 
