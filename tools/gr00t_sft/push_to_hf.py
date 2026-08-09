@@ -54,31 +54,57 @@ tags: [robotics, vla, gr00t, gr00t-n1.6, manipulation, maniguard, franka]
 
 # GR00T-N1.6 - {title} (joint, 2-cam)
 
-NVIDIA Isaac **GR00T-N1.6-3B** fine-tuned on the ManiGuard **{task}** base task (sim
-Franka Panda). Part of the ManiGuard VLA benchmark - GR00T vs pi0.5 on the same task
-families with identical data, cameras, and controller.
+NVIDIA Isaac **GR00T-N1.6-3B** fine-tuned on the ManiGuard **{task}** base task ({domain}).
+Part of the ManiGuard VLA benchmark - GR00T vs pi0.5 on the same task families with
+identical data, cameras, and controller.
 
 ## Model
 - **Base:** [nvidia/GR00T-N1.6-3B](https://huggingface.co/nvidia/GR00T-N1.6-3B) - Eagle (nvidia/Eagle-Block2A-2B-v2) VLM + flow-matching DiT action head
 - **Embodiment:** NEW_EMBODIMENT - Franka Panda, **8-D joint** state/action (7 arm joints + 1 gripper)
-- **Cameras (2):** image_left (overview) + wrist (256x256)
-- **Action:** arm = state-relative chunks, gripper = absolute; 16-step horizon; NON_EEF (joint space)
+- **Cameras (2):** image_left (overview) + wrist ({resolution})
+- **Action:** {action_desc}
 - **Tuning:** GR00T-N1.6 default - VLM (LLM + visual) **frozen**, train projector + diffusion action head (**no LoRA**)
 
 ## Training
-- 8-card config, DeepSpeed ZeRO-2, bf16, global batch {batch}, {steps} steps (~{epochs} epochs over {frames:,} frames), cosine LR (peak 2e-4, sqrt-scaled), warmup 0.05
+- {hardware}, bf16, global batch {batch}, {steps} steps (~{epochs} epochs over {frames:,} frames), cosine LR (peak {lr}, sqrt-scaled), warmup 0.05
 - Data: [{data_repo}](https://huggingface.co/datasets/{data_repo}); videos decoded as H.264 for GR00T's torchcodec loader
 
 ## Usage
 Load with `Gr00tPolicy` from [Isaac-GR00T (n1d6)](https://github.com/NVIDIA/Isaac-GR00T/tree/n1d6), `--embodiment-tag NEW_EMBODIMENT`. The included `processor/` carries the normalization stats + modality config.
 
-> WARNING - Convention (must match at eval): joint-space JointController (absolute joint targets, NON_EEF) + 2 cameras (image_left overview + wrist). A mismatched controller or camera set silently feeds an out-of-distribution input.
+> WARNING - Convention (must match at eval): {warning} A mismatched controller or camera set silently feeds an out-of-distribution input.
 """
+
+# Domain-dependent card text. The action semantics are NOT cosmetic: a real checkpoint emits
+# joint VELOCITY (the arm group is ABSOLUTE, so nothing is added back to the state), while a
+# sim one emits absolute joint targets reconstructed from state-relative chunks. Describing
+# one as the other misinstructs whoever serves it.
+_DOMAIN = {
+    False: dict(
+        domain="sim Franka Panda",
+        resolution="256x256",
+        action_desc="arm = state-relative chunks (reconstructed to absolute at inference), "
+                    "gripper = absolute; 16-step horizon at 30 fps (0.53 s); NON_EEF (joint space)",
+        warning="joint-space JointController (absolute joint targets, NON_EEF) + 2 cameras "
+                "(image_left overview + wrist).",
+    ),
+    True: dict(
+        domain="real Franka Panda, DROID-schema teleop",
+        resolution="180x320, 16:9 centre-cropped at conversion time",
+        action_desc="arm = joint VELOCITY (rad/s, ABSOLUTE representation - no state delta is "
+                    "applied), gripper = next-frame target; 16-step horizon at 15 fps (1.07 s); "
+                    "NON_EEF (joint space)",
+        warning="the policy emits joint VELOCITY in rad/s - the client must apply "
+                "`delta = action / 15` with NO clip, and must send 16:9 centre-cropped frames "
+                "(the crop is baked into the training data), from 2 cameras "
+                "(exterior_image_1_left + wrist_image_left).",
+    ),
+}
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--ckpt", required=True, help="checkpoint dir to upload")
+    ap.add_argument("--ckpt", help="checkpoint dir to upload (not needed with --card-only)")
     ap.add_argument("--repo", required=True, help="target HF model repo (org/name)")
     ap.add_argument("--title", required=True, help='card title, e.g. "Stack-Retrieve"')
     ap.add_argument("--task", required=True, help="task slug, e.g. stack-retrieve")
@@ -87,17 +113,31 @@ def main() -> None:
     ap.add_argument("--epochs", type=int, required=True)
     ap.add_argument("--steps", type=int, required=True)
     ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--gpus", type=int, default=8, help="cards the run actually used (card text)")
+    ap.add_argument("--lr", default="2e-4", help="peak LR the run actually used (card text)")
+    ap.add_argument("--real", action="store_true",
+                    help="real-robot (DROID schema) checkpoint: the card must state joint "
+                         "VELOCITY actions and the 16:9 crop, not sim's absolute joint targets")
+    ap.add_argument("--card-only", action="store_true",
+                    help="regenerate and upload README.md only; do not re-upload the weights")
     args = ap.parse_args()
 
     api = HfApi()
     api.create_repo(args.repo, repo_type="model", private=False, exist_ok=True)
-    api.upload_folder(
-        folder_path=args.ckpt,
-        repo_id=args.repo,
-        repo_type="model",
-        ignore_patterns=_IGNORE,
-        commit_message=f"GR00T-N1.6 SFT on {args.task} ({args.epochs} epochs, {args.steps} steps)",
-    )
+    if args.card_only:
+        print("card-only: skipping the weight upload")
+    elif not args.ckpt:
+        ap.error("--ckpt is required unless --card-only is given")
+    else:
+        api.upload_folder(
+            folder_path=args.ckpt,
+            repo_id=args.repo,
+            repo_type="model",
+            ignore_patterns=_IGNORE,
+            commit_message=f"GR00T-N1.6 SFT on {args.task} ({args.epochs} epochs, {args.steps} steps)",
+        )
+    hardware = (f"{args.gpus}-card config, DeepSpeed ZeRO-2" if args.gpus > 1
+                else "single-card config")
     card = _CARD.format(
         title=args.title,
         task=args.task,
@@ -106,6 +146,9 @@ def main() -> None:
         epochs=args.epochs,
         steps=args.steps,
         batch=args.batch,
+        hardware=hardware,
+        lr=args.lr,
+        **_DOMAIN[args.real],
     )
     api.upload_file(
         path_or_fileobj=card.encode("utf-8"),
