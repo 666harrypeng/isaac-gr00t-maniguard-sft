@@ -106,12 +106,21 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--ckpt", help="checkpoint dir to upload (not needed with --card-only)")
     ap.add_argument("--repo", required=True, help="target HF model repo (org/name)")
-    ap.add_argument("--title", required=True, help='card title, e.g. "Stack-Retrieve"')
-    ap.add_argument("--task", required=True, help="task slug, e.g. stack-retrieve")
-    ap.add_argument("--data-repo", required=True, help="source HF dataset repo")
-    ap.add_argument("--frames", type=int, required=True)
-    ap.add_argument("--epochs", type=int, required=True)
-    ap.add_argument("--steps", type=int, required=True)
+    ap.add_argument("--title", help='card title, e.g. "Stack-Retrieve"')
+    ap.add_argument("--task", help="task slug, e.g. stack-retrieve")
+    ap.add_argument("--data-repo", help="source HF dataset repo")
+    ap.add_argument("--frames", type=int)
+    ap.add_argument("--epochs", type=int)
+    ap.add_argument("--steps", type=int)
+    ap.add_argument("--path-in-repo", default="",
+                    help="upload into this SUBFOLDER instead of the repo root, e.g. "
+                         "'checkpoint-30000'. Use it to add an intermediate rung beside the "
+                         "final bundle without overwriting it. Implies no model card: the "
+                         "card describes the repo as a whole and lives at the root.")
+    ap.add_argument("--rungs", default="",
+                    help="comma-separated intermediate steps present as subfolders, e.g. "
+                         "'10000,20000,30000'. Adds a ladder section to the card so the rungs "
+                         "are discoverable without guessing folder names.")
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--gpus", type=int, default=8, help="cards the run actually used (card text)")
     ap.add_argument("--lr", default="2e-4", help="peak LR the run actually used (card text)")
@@ -122,6 +131,15 @@ def main() -> None:
                     help="regenerate and upload README.md only; do not re-upload the weights")
     args = ap.parse_args()
 
+    # The card describes the whole repo, so a subfolder upload must not rewrite it -- and the
+    # metadata it needs is then irrelevant. Everything else still requires the full set.
+    writes_card = not args.path_in_repo
+    if writes_card:
+        need = [n for n in ("title", "task", "data_repo", "frames", "epochs", "steps")
+                if getattr(args, n) is None]
+        if need:
+            ap.error("missing required card metadata: " + ", ".join("--" + n.replace("_", "-") for n in need))
+
     api = HfApi()
     api.create_repo(args.repo, repo_type="model", private=False, exist_ok=True)
     if args.card_only:
@@ -129,13 +147,19 @@ def main() -> None:
     elif not args.ckpt:
         ap.error("--ckpt is required unless --card-only is given")
     else:
+        msg = (f"GR00T-N1.6 SFT on {args.task} ({args.epochs} epochs, {args.steps} steps)"
+               if writes_card else f"add intermediate rung {args.path_in_repo}")
         api.upload_folder(
             folder_path=args.ckpt,
+            path_in_repo=args.path_in_repo,
             repo_id=args.repo,
             repo_type="model",
             ignore_patterns=_IGNORE,
-            commit_message=f"GR00T-N1.6 SFT on {args.task} ({args.epochs} epochs, {args.steps} steps)",
+            commit_message=msg,
         )
+    if not writes_card:
+        print("PUSHED", f"{args.repo}/{args.path_in_repo}")
+        return
     hardware = (f"{args.gpus}-card config, DeepSpeed ZeRO-2" if args.gpus > 1
                 else "single-card config")
     card = _CARD.format(
@@ -150,6 +174,18 @@ def main() -> None:
         lr=args.lr,
         **_DOMAIN[args.real],
     )
+    if args.rungs:
+        rungs = [s.strip() for s in args.rungs.split(",") if s.strip()]
+        card += (
+            "\n## Checkpoint ladder\n\n"
+            f"The repo root is the FINAL model ({args.steps} steps). Earlier rungs are kept as "
+            "subfolders so a later checkpoint that overfits can be compared against them:\n\n"
+            + "".join(f"- `checkpoint-{s}/`\n" for s in rungs)
+            + "\nEach subfolder is a complete inference bundle (weights + `config.json` + the "
+            "processor files); load one by pointing `Gr00tPolicy` at "
+            "`<repo>/checkpoint-<step>`. The processor is identical across rungs -- the "
+            "normalization stats and modality config are fixed at the start of training.\n"
+        )
     api.upload_file(
         path_or_fileobj=card.encode("utf-8"),
         path_in_repo="README.md",
